@@ -90,12 +90,8 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 
@@ -108,7 +104,7 @@ app.MapPost("/api/v1/IncluirNoticia", async (INoticiaRepository repository, IMap
     {
         await repository.Add(objModel);
 
-        return Results.Ok(new 
+        return Results.Ok(new
         {
             message = "Notícia cadastrada com sucesso!"
         });
@@ -124,7 +120,7 @@ app.MapPost("/api/v1/IncluirNoticia", async (INoticiaRepository repository, IMap
     .RequireAuthorization()
     .WithTags("Notícia");
 
-app.MapGet("/api/v1/Noticias", async (INoticiaRepository repository, IMapper _mapper) =>
+app.MapGet("/api/v1/GetNoticiasAll", async (INoticiaRepository repository, IMapper _mapper) =>
 {
     var noticias = await repository.GetAll();
 
@@ -136,12 +132,11 @@ app.MapGet("/api/v1/Noticias", async (INoticiaRepository repository, IMapper _ma
     .RequireAuthorization()
     .WithTags("Notícia");
 
-app.MapGet("/api/v1/Noticia", async (INoticiaRepository repository, IMapper _mapper, int idNoticia) =>
+app.MapGet("/api/v1/GetNoticiaById", async (INoticiaRepository repository, IMapper _mapper, int idNoticia) =>
 {
     var noticia = await repository.GetById(idNoticia);
 
     if (noticia != null)
-        //return Results.Ok(_mapper.Map<MotoristaViewModel>(motoristaDM));
         return Results.Ok(noticia);
 
     return Results.NoContent();
