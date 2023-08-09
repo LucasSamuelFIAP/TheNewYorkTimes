@@ -1,13 +1,34 @@
+using AutoMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System;
 using System.Text;
 using TheNewYorkTimes;
+using TheNewYorkTimes.Data;
+using TheNewYorkTimes.Infrastructure.Configurations;
+using TheNewYorkTimes.Interfaces.Repositories;
+using TheNewYorkTimes.Interfaces.Services;
 using TheNewYorkTimes.Models;
+using TheNewYorkTimes.Models.InputModels;
+using TheNewYorkTimes.Models.ViewModels;
 using TheNewYorkTimes.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-var key = Encoding.ASCII.GetBytes(Settings.Secret); //COLOCAR EM UMA VARIAVEL AMBIENTE NO GIT
+
+#region COLOCAR EM UMA VARIAVEL AMBIENTE NO GIT
+
+var key = Encoding.ASCII.GetBytes(Settings.Secret);
+var connectionString = builder.Configuration.GetConnectionString("database");
+
+#endregion
+
+builder.Services.AddDbContext<SqlContext>(options => options.UseSqlServer(connectionString));
+
+builder.Services.DependencyMap();
+
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -61,6 +82,12 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
+    options.AddPolicy("User", policy => policy.RequireRole("user"));
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -72,31 +99,145 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
+app.MapPost("/api/v1/IncluirNoticia", async (INoticiaRepository repository, IMapper _mapper, NoticiaInputModel model) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+    var viewModel = _mapper.Map<NoticiaViewModel>(model);
+    var objModel = _mapper.Map<Noticia>(viewModel);
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
+    try
+    {
+        await repository.Add(objModel);
 
-    var token = TokenService.GenereteToken(new Usuario("Lucas", "Teste", "123", "teste", true));
-    return forecast;
+        return Results.Ok(new 
+        {
+            message = "Notícia cadastrada com sucesso!"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            message = $"Erro ao cadastrar a notícia. {ex.Message}"
+        });
+    }
 })
-.WithName("GetWeatherForecast")
-.WithOpenApi();
+    .RequireAuthorization()
+    .WithTags("Notícia");
+
+app.MapGet("/api/v1/Noticias", async (INoticiaRepository repository, IMapper _mapper) =>
+{
+    var noticias = await repository.GetAll();
+
+    if (noticias != null)
+        return Results.Ok(noticias);
+
+    return Results.NoContent();
+})
+    .RequireAuthorization()
+    .WithTags("Notícia");
+
+app.MapGet("/api/v1/Noticia", async (INoticiaRepository repository, IMapper _mapper, int idNoticia) =>
+{
+    var noticia = await repository.GetById(idNoticia);
+
+    if (noticia != null)
+        //return Results.Ok(_mapper.Map<MotoristaViewModel>(motoristaDM));
+        return Results.Ok(noticia);
+
+    return Results.NoContent();
+})
+    .RequireAuthorization()
+    .WithTags("Notícia");
+
+app.MapPost("/api/v1/IncluirUsuario", async (IUsuarioRepository usuarioRepository, IMapper _mapper, IHashService hashService, UsuarioInputModel model) =>
+{
+    try
+    {
+        if (model == null)
+            return Results.BadRequest(new
+            {
+                message = $"Informe os dados solicitados."
+            });
+
+        var viewModel = _mapper.Map<UsuarioViewModel>(model);
+
+        if (await usuarioRepository.VerificaSeUsuarioExiste(viewModel.LoginUser))
+            return Results.Ok(new
+            {
+                message = "E-mail informado já está cadastrado!"
+            });
+
+        if (viewModel != null)
+        {
+            viewModel.Senha = hashService.CriptografarSenha(model.Senha);
+            viewModel.Role = "user";
+            viewModel.Ativo = true;
+        }
+
+        var objModel = _mapper.Map<Usuario>(viewModel);
+
+        await usuarioRepository.Add(objModel);
+
+        return Results.Ok(new
+        {
+            message = $"Usuário {objModel.Nome} cadastrado com sucesso!"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            message = $"Erro ao cadastrar o usuário. {ex.Message}"
+        });
+    }
+})
+    .AllowAnonymous()
+    .WithTags("Usuário");
+
+app.MapPost("/api/v1/login", async (IUsuarioRepository usuarioRepository, IMapper _mapper, IHashService hashService, LoginInputModel model) =>
+{
+    if (string.IsNullOrEmpty(model.LoginUser) || string.IsNullOrEmpty(model.Senha))
+        return Results.NotFound(new
+        {
+            message = "Informe o usuário e senha!"
+        });
+
+    var viewModel = _mapper.Map<LoginViewModel>(model);
+    var objModel = _mapper.Map<Usuario>(viewModel);
+
+    var usuario = await usuarioRepository.GetUsuarioByLogin(objModel.LoginUser);
+
+    if (usuario == null)
+        return Results.NotFound(new
+        {
+            message = "Usuário não cadastrado!"
+        });
+
+    var senhaDigitadaCripto = hashService.CriptografarSenha(model.Senha);
+
+    if (senhaDigitadaCripto != usuario.Senha)
+        return Results.NotFound(new
+        {
+            message = "Usuário ou senha incorreto!"
+        });
+
+    if (!usuario.Ativo)
+        return Results.Ok(new
+        {
+            message = "Usuário bloqueado!"
+        });
+
+    var token = TokenService.GenereteToken(usuario);
+
+    usuario.Senha = "";
+
+    return Results.Ok(new
+    {
+        usuario = usuario,
+        token = token
+    });
+})
+    .AllowAnonymous()
+    .WithTags("Usuário");
 
 app.Run();
-
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
