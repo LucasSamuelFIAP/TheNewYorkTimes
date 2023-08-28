@@ -8,10 +8,9 @@ namespace TheNewYorkTimes.Services
 {
     public static class TokenService
     {
-        public static string GenereteToken(Usuario usuario)
+        public static string GenereteToken(Usuario usuario, byte[] key)
         {
             var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.ASCII.GetBytes(Settings.Secret); //COLOCAR EM UMA VARIAVEL AMBIENTE NO GIT
             var tokenDescriptor = new SecurityTokenDescriptor()
             {
                 Subject = new ClaimsIdentity(new Claim[]

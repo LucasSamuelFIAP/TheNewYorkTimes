@@ -14,15 +14,37 @@ using TheNewYorkTimes.Models;
 using TheNewYorkTimes.Models.InputModels;
 using TheNewYorkTimes.Models.ViewModels;
 using TheNewYorkTimes.Services;
+using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
+using Azure.Core;
+using Microsoft.Extensions.Azure;
+using Azure.Extensions.AspNetCore.Configuration.Secrets;
 
 var builder = WebApplication.CreateBuilder(args);
 
-#region COLOCAR EM UMA VARIAVEL AMBIENTE NO GIT
+SecretClientOptions options = new SecretClientOptions()
+{
+    Retry =
+    {
+        Delay = TimeSpan.FromSeconds(2),
+        MaxDelay = TimeSpan.FromSeconds(16),
+        MaxRetries = 5,
+        Mode = RetryMode.Exponential
+    }
+};
 
-var key = Encoding.ASCII.GetBytes(Settings.Secret);
-var connectionString = builder.Configuration.GetConnectionString("database");
+string kvUrl = builder.Configuration["KeyVaultConfig:KVUrl"] ?? string.Empty;
+string tenantId = builder.Configuration["KeyVaultConfig:TenantId"] ?? string.Empty;
+string clientId = builder.Configuration["KeyVaultConfig:ClientId"] ?? string.Empty;
+string clientSecret = builder.Configuration["KeyVaultConfig:ClientSecretId"] ?? string.Empty; 
 
-#endregion
+var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+var client = new SecretClient(new Uri(kvUrl), credential, options);
+KeyVaultSecret secret = client.GetSecret("ConnectionStringDataBase");
+KeyVaultSecret tokenSecret = client.GetSecret("TokenSecret");
+
+var connectionString = secret.Value.Replace("\\\\", "\\");
+var key = Encoding.ASCII.GetBytes(tokenSecret.Value);
 
 builder.Services.AddDbContext<SqlContext>(options => options.UseSqlServer(connectionString));
 
@@ -222,7 +244,7 @@ app.MapPost("/api/v1/login", async (IUsuarioRepository usuarioRepository, IMappe
             message = "Usuário bloqueado!"
         });
 
-    var token = TokenService.GenereteToken(usuario);
+    var token = TokenService.GenereteToken(usuario, key);
 
     usuario.Senha = "";
 
